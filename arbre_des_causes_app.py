@@ -3,9 +3,13 @@ import streamlit as st
 import graphviz
 import uuid
 
-# Initialiser les états de session
+st.set_page_config(page_title="Arbre des Causes Interactif", layout="wide")
+st.title("🌳 Arbre des Causes Interactif")
+
+# Initialisation de l'état de session
 if "nodes" not in st.session_state:
     st.session_state.nodes = {}
+if "edges" not in st.session_state:
     st.session_state.edges = []
 
 # Fonction pour ajouter un nœud
@@ -17,55 +21,47 @@ def add_node(label, parent_id=None):
 
 # Fonction pour supprimer un nœud
 def delete_node(node_id):
-    st.session_state.nodes.pop(node_id, None)
-    st.session_state.edges = [edge for edge in st.session_state.edges if edge[0] != node_id and edge[1] != node_id]
+    if node_id in st.session_state.nodes:
+        del st.session_state.nodes[node_id]
+        st.session_state.edges = [(src, tgt) for src, tgt in st.session_state.edges if src != node_id and tgt != node_id]
 
-# Interface utilisateur
-st.title("🌳 Arbre des Causes Interactif")
-
-# Ajouter un nouveau nœud
+# Interface utilisateur pour ajouter un nœud
 with st.form("add_node_form"):
-    label = st.text_input("Nom du nœud à ajouter")
-    parent_options = list(st.session_state.nodes.items())
-    parent_id = st.selectbox("Sélectionner le nœud parent", options=[None] + [node_id for node_id, data in parent_options],
-                             format_func=lambda x: "Aucun (racine)" if x is None else st.session_state.nodes[x]["label"])
+    new_label = st.text_input("Nom du nœud à ajouter")
+    parent_options = {"Aucun (racine)": None}
+    parent_options.update({v["label"]: k for k, v in st.session_state.nodes.items()})
+    selected_parent_label = st.selectbox("Sélectionner le nœud parent", list(parent_options.keys()))
     submitted = st.form_submit_button("Ajouter")
-    if submitted and label:
-        add_node(label, parent_id)
+    if submitted and new_label:
+        add_node(new_label, parent_options[selected_parent_label])
 
-# Supprimer un nœud
+# Interface utilisateur pour supprimer un nœud
 with st.form("delete_node_form"):
-    delete_id = st.selectbox("Sélectionner un nœud à supprimer", options=[None] + list(st.session_state.nodes.keys()),
-                             format_func=lambda x: "" if x is None else st.session_state.nodes[x]["label"])
-    delete_submit = st.form_submit_button("Supprimer")
-    if delete_submit and delete_id:
-        delete_node(delete_id)
+    if st.session_state.nodes:
+        delete_options = {v["label"]: k for k, v in st.session_state.nodes.items()}
+        selected_delete_label = st.selectbox("Sélectionner un nœud à supprimer", list(delete_options.keys()))
+        delete_submitted = st.form_submit_button("Supprimer")
+        if delete_submitted:
+            delete_node(delete_options[selected_delete_label])
 
-# Affichage de l'arbre avec orientation droite à gauche
+# Affichage de l'arbre avec Graphviz
 if st.session_state.nodes:
     dot = graphviz.Digraph()
-    dot.attr(rankdir="RL")  # Right to Left
+    dot.attr(rankdir="RL")  # Affichage de droite à gauche
     for node_id, data in st.session_state.nodes.items():
         dot.node(node_id, data["label"])
-    for parent, child in st.session_state.edges:
-        dot.edge(parent, child)
+    for src, tgt in st.session_state.edges:
+        dot.edge(src, tgt)
     st.graphviz_chart(dot)
+else:
+    st.info("Ajoutez un nœud pour commencer à construire l'arbre des causes.")
 
-# Instructions pour mise à jour GitHub et Streamlit Cloud
-with st.expander("📦 Instructions pour mettre à jour sur GitHub et relancer Streamlit Cloud"):
+# Instructions pour mise à jour GitHub
+with st.expander("📦 Instructions pour mettre à jour sur GitHub et Streamlit Cloud"):
     st.markdown("""
-**Étapes pour mettre à jour ton application :**
-
-1. Va sur ton dépôt GitHub `arbre-des-causes`.
-2. Clique sur **"Add file" > "Upload files"**.
-3. Glisse ce fichier mis à jour `arbre_des_causes_app.py`.
-4. Clique sur **"Commit changes"**.
-
-**Sur Streamlit Cloud :**
-
-1. Va sur [https://streamlit.io/cloud](https://streamlit.io/cloud).
-2. Clique sur **"Manage app"**.
-3. Clique sur **"Rerun"** ou **"Restart"** pour relancer l’application avec les modifications.
-
-Ton application sera mise à jour automatiquement 🎉
-""")
+    1. Sur GitHub, allez dans votre dépôt `arbre-des-causes`.
+    2. Supprimez l'ancien fichier `arbre_des_causes_app.py`.
+    3. Cliquez sur **Add file > Upload files** et ajoutez ce nouveau fichier.
+    4. Cliquez sur **Commit changes**.
+    5. Sur [Streamlit Cloud](https://streamlit.io/cloud), allez dans **Manage app** et cliquez sur **Rerun** ou **Restart**.
+    """)
