@@ -1,67 +1,59 @@
-
 import streamlit as st
 import graphviz
-import uuid
-
-st.set_page_config(page_title="Arbre des Causes Interactif", layout="wide")
-st.title("🌳 Arbre des Causes Interactif")
 
 # Initialisation de l'état de session
 if "nodes" not in st.session_state:
-    st.session_state.nodes = {}
+    st.session_state.nodes = {"racine": "Racine"}
 if "edges" not in st.session_state:
     st.session_state.edges = []
 
-# Fonction pour ajouter un nœud
-def add_node(label, parent_id=None):
-    node_id = str(uuid.uuid4())
-    st.session_state.nodes[node_id] = {"label": label}
-    if parent_id:
-        st.session_state.edges.append((parent_id, node_id))
+st.title("🌳 Arbre des Causes Interactif")
 
-# Fonction pour supprimer un nœud
-def delete_node(node_id):
-    if node_id in st.session_state.nodes:
-        del st.session_state.nodes[node_id]
-        st.session_state.edges = [(src, tgt) for src, tgt in st.session_state.edges if src != node_id and tgt != node_id]
+# Section pour ajouter un nœud
+st.subheader("➕ Ajouter un nœud")
+new_node_label = st.text_input("Nom du nouveau nœud")
+parent_options = list(st.session_state.nodes.keys())
+selected_parent = st.selectbox("Sélectionner le nœud parent", parent_options)
 
-# Interface utilisateur pour ajouter un nœud
-with st.form("add_node_form"):
-    new_label = st.text_input("Nom du nœud à ajouter")
-    parent_options = {"Aucun (racine)": None}
-    parent_options.update({v["label"]: k for k, v in st.session_state.nodes.items()})
-    selected_parent_label = st.selectbox("Sélectionner le nœud parent", list(parent_options.keys()))
-    submitted = st.form_submit_button("Ajouter")
-    if submitted and new_label:
-        add_node(new_label, parent_options[selected_parent_label])
+if st.button("Ajouter"):
+    if new_node_label:
+        new_node_id = f"node_{len(st.session_state.nodes)}"
+        st.session_state.nodes[new_node_id] = new_node_label
+        st.session_state.edges.append((selected_parent, new_node_id))
+        st.success(f"Nœud '{new_node_label}' ajouté sous '{st.session_state.nodes[selected_parent]}'")
 
-# Interface utilisateur pour supprimer un nœud
-with st.form("delete_node_form"):
-    if st.session_state.nodes:
-        delete_options = {v["label"]: k for k, v in st.session_state.nodes.items()}
-        selected_delete_label = st.selectbox("Sélectionner un nœud à supprimer", list(delete_options.keys()))
-        delete_submitted = st.form_submit_button("Supprimer")
-        if delete_submitted:
-            delete_node(delete_options[selected_delete_label])
+# Section pour supprimer un nœud
+st.subheader("🗑️ Supprimer un nœud")
+removable_nodes = {k: v for k, v in st.session_state.nodes.items() if k != "racine"}
+if removable_nodes:
+    node_to_remove = st.selectbox("Sélectionner un nœud à supprimer", list(removable_nodes.keys()))
+    if st.button("Supprimer"):
+        # Supprimer les liens associés
+        st.session_state.edges = [edge for edge in st.session_state.edges if node_to_remove not in edge]
+        # Supprimer le nœud
+        del st.session_state.nodes[node_to_remove]
+        st.success(f"Nœud supprimé : {removable_nodes[node_to_remove]}")
 
 # Affichage de l'arbre avec Graphviz
-if st.session_state.nodes:
-    dot = graphviz.Digraph()
-    dot.attr(rankdir="RL")  # Affichage de droite à gauche
-    for node_id, data in st.session_state.nodes.items():
-        dot.node(node_id, data["label"])
-    for src, tgt in st.session_state.edges:
-        dot.edge(src, tgt)
-    st.graphviz_chart(dot)
-else:
-    st.info("Ajoutez un nœud pour commencer à construire l'arbre des causes.")
+st.subheader("📌 Arbre des causes")
+dot = graphviz.Digraph("Arbre des Causes", format="png")
+dot.attr(rankdir="RL")  # Affichage de droite à gauche
 
-# Instructions pour mise à jour GitHub
+# Ajouter les nœuds
+for node_id, label in st.session_state.nodes.items():
+    dot.node(node_id, label)
+
+# Ajouter les flèches
+for parent, child in st.session_state.edges:
+    dot.edge(parent, child)
+
+st.graphviz_chart(dot)
+
+# Instructions pour mise à jour
 with st.expander("📦 Instructions pour mettre à jour sur GitHub et Streamlit Cloud"):
     st.markdown("""
-    1. Sur GitHub, allez dans votre dépôt `arbre-des-causes`.
-    2. Supprimez l'ancien fichier `arbre_des_causes_app.py`.
-    3. Cliquez sur **Add file > Upload files** et ajoutez ce nouveau fichier.
-    4. Cliquez sur **Commit changes**.
-    5. Sur [Streamlit Cloud](https://streamlit.io/cloud), allez dans **Manage app** et cliquez sur **Rerun** ou **Restart**.
+    1. Supprime l'ancien fichier `arbre_des_causes_app.py` sur GitHub.
+    2. Upload ce nouveau fichier corrigé.
+    3. Clique sur "Commit changes".
+    4. Sur Streamlit Cloud, clique sur "Manage app" > "Rerun" pour relancer l'application.
     """)
