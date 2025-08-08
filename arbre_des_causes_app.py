@@ -41,7 +41,7 @@ if st.button("Ajouter"):
             "label": new_node_label.strip(),
             "category": new_node_category,
         }
-        # On enregistre la relation parent -> enfant (structure logique)
+        # On enregistre la relation Parent -> Enfant (structure logique)
         st.session_state.edges.append((parent_id, new_node_id))
         st.success(
             f"Nœud '{new_node_label}' ajouté sous "
@@ -83,9 +83,9 @@ for node_id, data in st.session_state.nodes.items():
     else:
         dot.node(node_id, label)  # pas de catégorie -> style par défaut
 
-# Arêtes affichées de droite vers gauche (enfant -> parent visuellement)
+# Arêtes Parent -> Enfant (donc flèches de droite vers gauche visuellement)
 for src, tgt in st.session_state.edges:
-    dot.edge(tgt, src)
+    dot.edge(src, tgt)
 
 st.graphviz_chart(dot)
 
