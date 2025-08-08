@@ -1,12 +1,21 @@
 import streamlit as st
 import graphviz
 from collections import defaultdict, deque
+from io import BytesIO
+
+# Try to import python-docx for Word export
+try:
+    from docx import Document
+    from docx.shared import Pt
+    DOCX_AVAILABLE = True
+except Exception:
+    DOCX_AVAILABLE = False
 
 # --- Constantes ---
 CATEGORIES = {
-    "ORGANISATIONNELLE": {"color": "#CFE8FF", "desc": "Bleu clair"},
-    "HUMAINE": {"color": "#FFE5CC", "desc": "Orange clair"},
-    "TECHNIQUE": {"color": "#E6E6E6", "desc": "Gris clair"},
+    "ORGANISATIONNELLE": {"color": "#5B9BD5", "desc": "Bleu (plus soutenu)"},
+    "HUMAINE": {"color": "#ED7D31", "desc": "Orange (plus soutenu)"},
+    "TECHNIQUE": {"color": "#A6A6A6", "desc": "Gris (plus soutenu)"},
 }
 
 DEFAULT_RANKDIR = "RL"  # racine à droite -> causes à gauche
@@ -47,6 +56,58 @@ def is_descendant(root_id: str, query_id: str) -> bool:
         q.extend(children.get(n, []))
     return False
 
+def export_to_docx():
+    """Construit un document Word (texte uniquement) décrivant l'arbre."""
+    if not DOCX_AVAILABLE:
+        st.error("Le module python-docx n'est pas disponible dans cet environnement.")
+        return None
+
+    doc = Document()
+
+    # Titre = label de la racine
+    root_label = st.session_state.nodes.get("root", {}).get("label", "Racine")
+    doc.add_heading(f"Arbre des Causes — {root_label}", level=1)
+
+    # Légende
+    doc.add_heading("Légende des catégories", level=2)
+    for name, meta in CATEGORIES.items():
+        p = doc.add_paragraph()
+        run = p.add_run(f"{name} — {meta['desc']}")
+        run.font.size = Pt(10)
+
+    # Nœuds
+    doc.add_heading("Nœuds", level=2)
+    for node_id, data in st.session_state.nodes.items():
+        cat = data.get("category")
+        cat_txt = cat if cat in CATEGORIES else "Aucune"
+        doc.add_paragraph(f"- {data.get('label', node_id)}  [catégorie: {cat_txt}]")
+
+    # Arêtes
+    doc.add_heading("Liens (Parent → Enfant)", level=2)
+    if st.session_state.edges:
+        for src, tgt in st.session_state.edges:
+            src_label = st.session_state.nodes.get(src, {}).get("label", src)
+            tgt_label = st.session_state.nodes.get(tgt, {}).get("label", tgt)
+            doc.add_paragraph(f"- {src_label}  →  {tgt_label}")
+    else:
+        doc.add_paragraph("(aucun lien)")
+
+    # Buffer
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+# =========================
+# Racine modifiable
+# =========================
+st.subheader("Paramètres de la racine")
+root_current = st.session_state.nodes["root"]["label"]
+new_root_label = st.text_input("Nom de la racine", value=root_current, key="root_label_input")
+if st.button("Mettre à jour la racine"):
+    st.session_state.nodes["root"]["label"] = new_root_label.strip() or root_current
+    st.success("Nom de la racine mis à jour.")
+
 # =========================
 # Ajout d'un nœud
 # =========================
@@ -61,7 +122,7 @@ new_node_category = st.selectbox(
     "Catégorie (détermine la couleur de la bulle)",
     options=list(CATEGORIES.keys()),
     index=0,
-    help="ORGANISATIONNELLE = bleu clair, HUMAINE = orange clair, TECHNIQUE = gris clair"
+    help="ORGANISATIONNELLE = bleu soutenu, HUMAINE = orange soutenu, TECHNIQUE = gris soutenu"
 )
 
 if st.button("Ajouter"):
@@ -98,12 +159,9 @@ if len(st.session_state.nodes) > 0:
     cur_parent = get_parent(node_to_edit)
 
     edit_label = st.text_input("Nouveau libellé", value=cur_label, key="edit_label")
-    # Catégorie (None possible pour la racine si souhaité)
+    # Catégorie
     all_cats = list(CATEGORIES.keys())
-    if cur_cat in all_cats:
-        default_idx = all_cats.index(cur_cat)
-    else:
-        default_idx = 0
+    default_idx = all_cats.index(cur_cat) if cur_cat in all_cats else 0
     edit_cat = st.selectbox(
         "Nouvelle catégorie",
         options=all_cats,
@@ -111,16 +169,14 @@ if len(st.session_state.nodes) > 0:
         key="edit_category"
     )
 
-    # Re-attacher sous un nouveau parent (sauf pour la racine qui n'a pas de parent)
+    # Re-attacher sous un nouveau parent (sauf pour la racine)
     parents_candidates = [nid for nid in st.session_state.nodes.keys() if nid != node_to_edit]
-    # Filtrer pour éviter les cycles : on n'autorise pas de rattacher sous un descendant du nœud
     parents_candidates = [nid for nid in parents_candidates if not is_descendant(node_to_edit, nid)]
 
     if node_to_edit == "root":
         st.info("La racine ne peut pas être rattachée à un parent.")
         edit_parent = None
     else:
-        # Déterminer l'index par défaut basé sur le parent actuel
         if cur_parent in parents_candidates:
             default_parent_idx = parents_candidates.index(cur_parent)
         elif parents_candidates:
@@ -157,9 +213,10 @@ if len(st.session_state.nodes) > 0:
 # =========================
 st.header("Visualisation de l'arbre")
 dot = graphviz.Digraph("Arbre des Causes", format="png")
-dot.attr(rankdir=DEFAULT_RANKDIR)  # RL: racine à droite
+# Right-to-Left: la racine est à droite, les causes se développent vers la gauche
+dot.attr(rankdir=DEFAULT_RANKDIR)
 
-# Nœuds colorés selon la catégorie
+# Nœuds colorés selon la catégorie (couleurs plus soutenues)
 for node_id, data in st.session_state.nodes.items():
     label = data.get("label", node_id)
     cat = data.get("category")
@@ -168,7 +225,7 @@ for node_id, data in st.session_state.nodes.items():
     else:
         dot.node(node_id, label)
 
-# Arêtes
+# Arêtes Parent -> Enfant (donc flèches de droite vers gauche visuellement)
 for src, tgt in st.session_state.edges:
     if ARROW_MODE == "PARENT_TO_CHILD":
         dot.edge(src, tgt)
@@ -177,7 +234,16 @@ for src, tgt in st.session_state.edges:
 
 st.graphviz_chart(dot)
 
-# Légende
-st.caption(
-    "Couleurs — ORGANISATIONNELLE: bleu clair • HUMAINE: orange clair • TECHNIQUE: gris clair"
-)
+# =========================
+# Export Word (texte uniquement)
+# =========================
+st.header("Exporter")
+if st.button("Exporter en Word (.docx)"):
+    buf = export_to_docx()
+    if buf is not None:
+        st.download_button(
+            label="Télécharger le document Word",
+            data=buf.getvalue(),
+            file_name="arbre_des_causes.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
