@@ -41,7 +41,7 @@ if st.button("Ajouter"):
             "label": new_node_label.strip(),
             "category": new_node_category,
         }
-        # Parent -> Enfant
+        # On enregistre la relation parent -> enfant (structure logique)
         st.session_state.edges.append((parent_id, new_node_id))
         st.success(
             f"Nœud '{new_node_label}' ajouté sous "
@@ -71,7 +71,8 @@ if len(st.session_state.nodes) > 1:
 # --- Visualisation ---
 st.header("Visualisation de l'arbre")
 dot = graphviz.Digraph("Arbre des Causes", format="png")
-dot.attr(rankdir="LR")  # racine à gauche, causes à droite
+# Right-to-Left: la racine est à droite, les causes se développent vers la gauche
+dot.attr(rankdir="RL")
 
 # Nœuds colorés selon la catégorie
 for node_id, data in st.session_state.nodes.items():
@@ -82,9 +83,9 @@ for node_id, data in st.session_state.nodes.items():
     else:
         dot.node(node_id, label)  # pas de catégorie -> style par défaut
 
-# Arêtes Parent -> Enfant
+# Arêtes affichées de droite vers gauche (enfant -> parent visuellement)
 for src, tgt in st.session_state.edges:
-    dot.edge(src, tgt)
+    dot.edge(tgt, src)
 
 st.graphviz_chart(dot)
 
