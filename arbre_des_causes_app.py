@@ -1,4 +1,3 @@
-
 import streamlit as st
 import graphviz
 
@@ -20,10 +19,13 @@ parent_id = st.selectbox(
 )
 
 if st.button("Ajouter"):
-    new_node_id = f"node_{len(st.session_state.nodes)}"
-    st.session_state.nodes[new_node_id] = {"label": new_node_label}
-    st.session_state.edges.append((parent_id, new_node_id))
-    st.success(f"Nœud '{new_node_label}' ajouté sous '{st.session_state.nodes[parent_id]['label']}'")
+    if new_node_label.strip():
+        new_node_id = f"node_{len(st.session_state.nodes)}"
+        st.session_state.nodes[new_node_id] = {"label": new_node_label}
+        st.session_state.edges.append((parent_id, new_node_id))
+        st.success(f"Nœud '{new_node_label}' ajouté sous '{st.session_state.nodes[parent_id]['label']}'")
+    else:
+        st.warning("Veuillez entrer un nom de nœud valide.")
 
 # Section pour supprimer un nœud
 st.header("Supprimer un nœud")
@@ -47,14 +49,14 @@ if len(st.session_state.nodes) > 1:
 # Affichage de l'arbre des causes
 st.header("Visualisation de l'arbre")
 dot = graphviz.Digraph("Arbre des Causes", format="png")
-dot.attr(rankdir="RL")
+dot.attr(rankdir="RL")  # Right-to-Left (la racine à droite, causes vers la gauche)
 
 # Ajouter les nœuds
 for node_id, data in st.session_state.nodes.items():
     dot.node(node_id, data["label"])
 
-# Ajouter les arêtes
+# Ajouter les arêtes en inversant le sens (enfant -> parent)
 for src, tgt in st.session_state.edges:
-    dot.edge(src, tgt)
+    dot.edge(tgt, src)  # Inversion du sens des flèches
 
 st.graphviz_chart(dot)
