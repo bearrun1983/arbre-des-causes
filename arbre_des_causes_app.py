@@ -22,6 +22,7 @@ if st.button("Ajouter"):
     if new_node_label.strip():
         new_node_id = f"node_{len(st.session_state.nodes)}"
         st.session_state.nodes[new_node_id] = {"label": new_node_label}
+        # Parent -> Enfant
         st.session_state.edges.append((parent_id, new_node_id))
         st.success(f"Nœud '{new_node_label}' ajouté sous '{st.session_state.nodes[parent_id]['label']}'")
     else:
@@ -49,14 +50,14 @@ if len(st.session_state.nodes) > 1:
 # Affichage de l'arbre des causes
 st.header("Visualisation de l'arbre")
 dot = graphviz.Digraph("Arbre des Causes", format="png")
-dot.attr(rankdir="RL")  # Right-to-Left (la racine à droite, causes vers la gauche)
+dot.attr(rankdir="LR")  # Left-to-Right (racine à gauche, causes vers la droite)
 
 # Ajouter les nœuds
 for node_id, data in st.session_state.nodes.items():
     dot.node(node_id, data["label"])
 
-# Ajouter les arêtes en inversant le sens (enfant -> parent)
+# Ajouter les arêtes Parent -> Enfant
 for src, tgt in st.session_state.edges:
-    dot.edge(tgt, src)  # Inversion du sens des flèches
+    dot.edge(src, tgt)
 
 st.graphviz_chart(dot)
