@@ -47,7 +47,8 @@ def build_children_map(edges):
 
 def is_descendant(root_id, query_id):
     children = build_children_map(st.session_state.edges)
-    q = deque([root_id])
+    from collections import deque as _dq
+    q = _dq([root_id])
     while q:
         n = q.popleft()
         if n == query_id:
@@ -71,9 +72,7 @@ def export_docx(title, nodes, edges):
 
     doc.add_heading("Liens Parent → Enfant :", level=1)
     for src, tgt in edges:
-        doc.add_paragraph(
-            f"{nodes[src]['label']} → {nodes[tgt]['label']}"
-        )
+        doc.add_paragraph(f"{nodes[src]['label']} → {nodes[tgt]['label']}")
 
     buffer = BytesIO()
     doc.save(buffer)
@@ -93,6 +92,27 @@ def export_why_docx(problem, answers):
     buffer.seek(0)
     return buffer
 
+def read_docx_text(file) -> str:
+    '''Lit un .docx uploadé (file-like) et retourne tout le texte.'''
+    try:
+        doc = Document(file)
+        parts = []
+        # Paragraphes
+        for p in doc.paragraphs:
+            txt = (p.text or "").strip()
+            if txt:
+                parts.append(txt)
+        # Tableaux (optionnel si recueil contient des tableaux)
+        for tbl in doc.tables:
+            for row in tbl.rows:
+                row_text = [cell.text.strip() for cell in row.cells if cell.text]
+                if row_text:
+                    parts.append(" | ".join(row_text))
+        text = "\n".join(parts)
+        return text
+    except Exception as e:
+        return ""
+
 # =========================
 # Sidebar navigation
 # =========================
@@ -108,13 +128,15 @@ st.session_state.page = page
 # =========================
 if page == "Accueil":
     st.title("Bienvenue 👋")
-    st.markdown("""
-    Choisissez une méthode d'analyse :
+    st.markdown(
+        '''
+        Choisissez une méthode d'analyse :
 
-    - **Arbre des causes** : pour cartographier les causes multiples d'un accident de travail.
-    - **5 Pourquoi** : pour remonter linéairement à la cause racine.
-    - **Assistant IA (Recueil d’effets)** : collez vos constats, l’IA propose des questions et faits.
-    """)
+        - **Arbre des causes** : cartographier les causes multiples d'un accident de travail.
+        - **5 Pourquoi** : remonter linéairement à la cause racine.
+        - **Assistant IA (Recueil d’effets)** : uploadez votre **fichier Word (.docx)** de recueil d'effets.
+        '''
+    )
 
 # =========================
 # Page Arbre des causes
@@ -154,6 +176,55 @@ elif page == "Arbre des causes":
             st.success(f"Nœud ajouté : {new_node_label}")
         else:
             st.warning("Veuillez entrer un nom de nœud valide.")
+
+    # Edition
+    st.subheader("Modifier un nœud existant")
+    if len(st.session_state.nodes) > 0:
+        node_to_edit = st.selectbox(
+            "Choisir le nœud à modifier",
+            options=list(st.session_state.nodes.keys()),
+            format_func=lambda x: st.session_state.nodes[x]["label"],
+            key="edit_node_select"
+        )
+        cur_label = st.session_state.nodes[node_to_edit]["label"]
+        cur_cat = st.session_state.nodes[node_to_edit].get("category")
+        cur_parent = get_parent(node_to_edit)
+
+        edit_label = st.text_input("Nouveau libellé", value=cur_label, key="edit_label")
+        all_cats = list(CATEGORIES.keys())
+        default_idx = all_cats.index(cur_cat) if cur_cat in all_cats else 0
+        edit_cat = st.selectbox("Nouvelle catégorie", options=all_cats, index=default_idx, key="edit_category")
+
+        parents_candidates = [nid for nid in st.session_state.nodes.keys() if nid != node_to_edit]
+        parents_candidates = [nid for nid in parents_candidates if not is_descendant(node_to_edit, nid)]
+        if node_to_edit == "root":
+            st.info("La racine ne peut pas être rattachée à un parent.")
+            edit_parent = None
+        else:
+            if cur_parent in parents_candidates:
+                default_parent_idx = parents_candidates.index(cur_parent)
+            elif parents_candidates:
+                default_parent_idx = 0
+            else:
+                default_parent_idx = 0
+            edit_parent = st.selectbox(
+                "Nouveau parent",
+                options=parents_candidates,
+                index=default_parent_idx if parents_candidates else 0,
+                format_func=lambda x: st.session_state.nodes[x]["label"],
+                key="edit_parent_select"
+            ) if parents_candidates else None
+
+        if st.button("Mettre à jour"):
+            st.session_state.nodes[node_to_edit]["label"] = edit_label.strip() or cur_label
+            st.session_state.nodes[node_to_edit]["category"] = edit_cat
+            if node_to_edit != "root" and edit_parent is not None and edit_parent != cur_parent:
+                st.session_state.edges = [
+                    (src, tgt) for src, tgt in st.session_state.edges
+                    if not (src == cur_parent and tgt == node_to_edit)
+                ]
+                st.session_state.edges.append((edit_parent, node_to_edit))
+            st.success("Nœud mis à jour.")
 
     # Visualisation
     st.subheader("Visualisation")
@@ -201,7 +272,7 @@ elif page == "5 Pourquoi":
             f"Réponse au Pourquoi n°{i+1}", value=st.session_state.why[i], key=f"why_{i}"
         )
 
-    # Récapitulatif
+    # Récapitulatif vertical
     st.subheader("Récapitulatif")
     st.write(f"**Problème observé :** {problem}")
     for i, ans in enumerate(st.session_state.why, 1):
@@ -223,30 +294,42 @@ elif page == "5 Pourquoi":
 # =========================
 elif page == "Assistant IA (Recueil d’effets)":
     st.title("Assistant IA (Recueil d’effets)")
-    st.markdown("Collez vos constats, l’IA propose des **questions** et des **faits** à intégrer.")
+    st.markdown(
+        "Uploadez votre **fichier Word (.docx)** contenant le recueil d'effets. "
+        "L’IA analysera le contenu pour proposer des **questions à poser** et des **faits objectifs**."
+    )
 
-    recueil = st.text_area("Recueil d'effets")
+    uploaded = st.file_uploader("Importer un fichier Word (.docx)", type=["docx"])
+    extracted_text = ""
 
-    if st.button("Analyser avec IA"):
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-            prompt = f"""Analyse le texte suivant comme recueil d'effets d'un accident du travail.
-            Propose :
-            - une liste de questions complémentaires à poser
-            - une liste de faits objectifs, courts et neutres.
+    if uploaded is not None:
+        extracted_text = read_docx_text(uploaded)
+        with st.expander("Texte extrait (aperçu)"):
+            st.text_area("Contenu extrait", value=extracted_text, height=300)
 
-            Texte :
-            {recueil}
-            """
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-            )
-            st.session_state.ai_output = response.choices[0].message.content
-        except Exception as e:
-            st.error(f"Erreur IA : {e}")
-            st.info("⚠️ Vérifie que tu as défini OPENAI_API_KEY dans les secrets Streamlit.")
+    if st.button("Analyser avec IA", disabled=(uploaded is None)):
+        if not extracted_text.strip():
+            st.error("Impossible de lire du texte depuis le fichier. Vérifie le contenu du .docx.")
+        else:
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+                prompt = f'''Analyse le texte suivant comme recueil d'effets d'un accident du travail.
+Propose deux sections claires en puces :
+- QUESTIONS À POSER (10 max)
+- FAITS OBJECTIFS (phrases courtes, neutres, actionnables, 20 max)
+
+Texte :
+{extracted_text}
+'''
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                st.session_state.ai_output = response.choices[0].message.content
+            except Exception as e:
+                st.error(f"Erreur IA : {e}")
+                st.info("⚠️ Ajoute OPENAI_API_KEY dans les secrets Streamlit pour activer l'IA.")
 
     if "ai_output" in st.session_state:
         st.subheader("Résultat IA")
