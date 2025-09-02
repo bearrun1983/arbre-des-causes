@@ -1,3 +1,4 @@
 streamlit
 graphviz
 python-docx
+openai
