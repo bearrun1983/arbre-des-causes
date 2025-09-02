@@ -1,31 +1,25 @@
 import streamlit as st
 import graphviz
 from collections import defaultdict, deque
+from io import BytesIO
+from docx import Document
+import os
 
-try:
-    from docx import Document
-except Exception:
-    Document = None
-
-# =====================
-# Constantes & couleurs
-# =====================
+# =========================
+# Constantes
+# =========================
 CATEGORIES = {
-    "ORGANISATIONNELLE": {"color": "#5B9BD5", "desc": "Bleu (organisationnelle)"},
-    "HUMAINE": {"color": "#ED7D31", "desc": "Orange (humaine)"},
-    "TECHNIQUE": {"color": "#A6A6A6", "desc": "Gris (technique)"},
+    "ORGANISATIONNELLE": {"color": "#5B9BD5", "desc": "Bleu soutenu"},
+    "HUMAINE": {"color": "#ED7D31", "desc": "Orange soutenu"},
+    "TECHNIQUE": {"color": "#A6A6A6", "desc": "Gris soutenu"},
 }
 
-DEFAULT_RANKDIR = "RL"           # racine à droite -> causes à gauche
-ARROW_MODE = "PARENT_TO_CHILD"   # flèches Parent -> Enfant
-
-# =====================
-# États de session init
-# =====================
+# =========================
+# Initialisation de l'état
+# =========================
 if "page" not in st.session_state:
     st.session_state.page = "Accueil"
 
-# Arbre des causes
 if "nodes" not in st.session_state:
     st.session_state.nodes = {"root": {"label": "Racine", "category": None}}
 if "edges" not in st.session_state:
@@ -33,27 +27,13 @@ if "edges" not in st.session_state:
 if "root_label" not in st.session_state:
     st.session_state.root_label = "Racine"
 
-# 5 Pourquoi
-if "fivewhy_problem" not in st.session_state:
-    st.session_state.fivewhy_problem = ""
-if "fivewhy_answers" not in st.session_state:
-    st.session_state.fivewhy_answers = []  # list[str]
+if "why" not in st.session_state:
+    st.session_state.why = []
 
-# ===============
-# Sidebar routing
-# ===============
-st.sidebar.title("Navigation")
-page = st.sidebar.radio(
-    "Aller à",
-    ["Accueil", "Arbre des causes", "Méthode des 5 Pourquoi"],
-    index=["Accueil", "Arbre des causes", "Méthode des 5 Pourquoi"].index(st.session_state.page),
-)
-st.session_state.page = page
-
-# ========================
+# =========================
 # Fonctions utilitaires
-# ========================
-def get_parent(node_id: str):
+# =========================
+def get_parent(node_id):
     for src, tgt in st.session_state.edges:
         if tgt == node_id:
             return src
@@ -65,11 +45,9 @@ def build_children_map(edges):
         children[src].append(tgt)
     return children
 
-def is_descendant(root_id: str, query_id: str) -> bool:
-    """Retourne True si query_id est dans le sous-arbre de root_id (Parent->Enfant)."""
+def is_descendant(root_id, query_id):
     children = build_children_map(st.session_state.edges)
-    from collections import deque as _dq
-    q = _dq([root_id])
+    q = deque([root_id])
     while q:
         n = q.popleft()
         if n == query_id:
@@ -77,94 +55,95 @@ def is_descendant(root_id: str, query_id: str) -> bool:
         q.extend(children.get(n, []))
     return False
 
-def export_tree_to_docx(nodes, edges, root_label):
-    if Document is None:
-        st.error("Le module python-docx n'est pas disponible dans cet environnement.")
-        return
-
+def export_docx(title, nodes, edges):
     doc = Document()
-    doc.add_heading(f"Arbre des causes — {root_label}", level=1)
+    doc.add_heading(title, 0)
 
-    # Légende
-    doc.add_heading("Légende des catégories", level=2)
-    for k, v in CATEGORIES.items():
-        doc.add_paragraph(f"- {k}")
+    doc.add_heading("Catégories :", level=1)
+    for cat, info in CATEGORIES.items():
+        doc.add_paragraph(f"{cat} : {info['desc']}")
 
-    # Nœuds
-    doc.add_heading("Nœuds", level=2)
+    doc.add_heading("Nœuds :", level=1)
     for nid, data in nodes.items():
-        label = data.get("label", nid)
-        cat = data.get("category")
-        doc.add_paragraph(f"• {label}  [{cat if cat else 'Aucune catégorie'}]")
+        label = data.get("label", "")
+        cat = data.get("category", "Non défini")
+        doc.add_paragraph(f"- {label} ({cat})")
 
-    # Liens
-    doc.add_heading("Liens (Parent → Enfant)", level=2)
+    doc.add_heading("Liens Parent → Enfant :", level=1)
     for src, tgt in edges:
-        src_label = nodes[src]["label"]
-        tgt_label = nodes[tgt]["label"]
-        doc.add_paragraph(f"• {src_label} → {tgt_label}")
+        doc.add_paragraph(
+            f"{nodes[src]['label']} → {nodes[tgt]['label']}"
+        )
 
-    return doc
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
 
-def export_fivewhy_to_docx(problem: str, answers: list[str]):
-    if Document is None:
-        st.error("Le module python-docx n'est pas disponible dans cet environnement.")
-        return
-
+def export_why_docx(problem, answers):
     doc = Document()
-    doc.add_heading("Analyse — Méthode des 5 Pourquoi", level=1)
-    doc.add_paragraph("Conseils : viser 5 pourquoi.")
+    doc.add_heading("Analyse 5 Pourquoi", 0)
 
-    doc.add_heading("Problème observé", level=2)
-    doc.add_paragraph(problem or "(non renseigné)")
+    doc.add_paragraph(f"Problème observé : {problem}")
+    for i, ans in enumerate(answers, 1):
+        doc.add_paragraph(f"{i}. Pourquoi ? — {ans}")
 
-    doc.add_heading("Chaîne des 'Pourquoi ?'", level=2)
-    if answers:
-        for i, ans in enumerate(answers, start=1):
-            doc.add_paragraph(f"{i}. Pourquoi ? — {ans}")
-    else:
-        doc.add_paragraph("(aucune réponse pour l'instant)")
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
 
-    return doc
+# =========================
+# Sidebar navigation
+# =========================
+st.sidebar.title("Navigation")
+page = st.sidebar.radio(
+    "Aller vers :",
+    ["Accueil", "Arbre des causes", "5 Pourquoi", "Assistant IA (Recueil d’effets)"],
+)
+st.session_state.page = page
 
-# ===================
-# Page: Accueil
-# ===================
+# =========================
+# Page Accueil
+# =========================
 if page == "Accueil":
-    st.title("LOGICIEL — Analyse des causes")
-    st.markdown(
-        "- Choisissez **Arbre des causes** pour une analyse multi-facteurs.\n"
-        "- Choisissez **Méthode des 5 Pourquoi** pour remonter linéairement à la cause racine."
-    )
+    st.title("Bienvenue 👋")
+    st.markdown("""
+    Choisissez une méthode d'analyse :
 
-# ===================
-# Page: Arbre des causes
-# ===================
+    - **Arbre des causes** : pour cartographier les causes multiples d'un accident de travail.
+    - **5 Pourquoi** : pour remonter linéairement à la cause racine.
+    - **Assistant IA (Recueil d’effets)** : collez vos constats, l’IA propose des questions et faits.
+    """)
+
+# =========================
+# Page Arbre des causes
+# =========================
 elif page == "Arbre des causes":
-    st.title("Arbre des Causes — Interface")
+    st.title("Analyse par Arbre des causes")
 
-    # Nom de la racine modifiable
+    # Nom racine
     st.subheader("Nom de la racine")
-    st.session_state.root_label = st.text_input("Nom de la racine", value=st.session_state.root_label)
+    st.session_state.root_label = st.text_input(
+        "Nom de la racine",
+        value=st.session_state.root_label
+    )
     st.session_state.nodes["root"]["label"] = st.session_state.root_label
 
     # Ajout
     st.subheader("Ajouter un nœud")
-    new_node_label = st.text_input("Nom du nouveau nœud", key="tree_new_label")
+    new_node_label = st.text_input("Nom du nouveau nœud")
     parent_id = st.selectbox(
         "Sélectionner le nœud parent",
         options=list(st.session_state.nodes.keys()),
-        format_func=lambda x: st.session_state.nodes[x]["label"],
-        key="tree_parent_select"
+        format_func=lambda x: st.session_state.nodes[x]["label"]
     )
     new_node_category = st.selectbox(
-        "Catégorie du nœud",
+        "Catégorie",
         options=list(CATEGORIES.keys()),
         index=0,
-        key="tree_new_category",
-        help="ORGANISATIONNELLE (bleu), HUMAINE (orange), TECHNIQUE (gris)"
     )
-    if st.button("Ajouter", key="tree_add_btn"):
+    if st.button("Ajouter"):
         if new_node_label.strip():
             new_node_id = f"node_{len(st.session_state.nodes)}"
             st.session_state.nodes[new_node_id] = {
@@ -172,65 +151,14 @@ elif page == "Arbre des causes":
                 "category": new_node_category,
             }
             st.session_state.edges.append((parent_id, new_node_id))
-            st.success(f"Nœud '{new_node_label}' ajouté sous '{st.session_state.nodes[parent_id]['label']}'.")
+            st.success(f"Nœud ajouté : {new_node_label}")
         else:
             st.warning("Veuillez entrer un nom de nœud valide.")
 
-    # Edition
-    st.subheader("Modifier un nœud existant")
-    if len(st.session_state.nodes) > 0:
-        node_to_edit = st.selectbox(
-            "Choisir le nœud à modifier",
-            options=list(st.session_state.nodes.keys()),
-            format_func=lambda x: st.session_state.nodes[x]["label"],
-            key="tree_edit_node_select"
-        )
-        cur_label = st.session_state.nodes[node_to_edit]["label"]
-        cur_cat = st.session_state.nodes[node_to_edit].get("category")
-        cur_parent = get_parent(node_to_edit)
-
-        edit_label = st.text_input("Nouveau libellé", value=cur_label, key="tree_edit_label")
-        all_cats = list(CATEGORIES.keys())
-        default_idx = all_cats.index(cur_cat) if cur_cat in all_cats else 0
-        edit_cat = st.selectbox("Nouvelle catégorie", options=all_cats, index=default_idx, key="tree_edit_category")
-
-        parents_candidates = [nid for nid in st.session_state.nodes.keys() if nid != node_to_edit]
-        parents_candidates = [nid for nid in parents_candidates if not is_descendant(node_to_edit, nid)]
-
-        if node_to_edit == "root":
-            st.info("La racine ne peut pas être rattachée à un parent.")
-            edit_parent = None
-        else:
-            if cur_parent in parents_candidates:
-                default_parent_idx = parents_candidates.index(cur_parent)
-            elif parents_candidates:
-                default_parent_idx = 0
-            else:
-                default_parent_idx = 0
-            edit_parent = st.selectbox(
-                "Nouveau parent",
-                options=parents_candidates,
-                index=default_parent_idx if parents_candidates else 0,
-                format_func=lambda x: st.session_state.nodes[x]["label"],
-                key="tree_edit_parent_select"
-            ) if parents_candidates else None
-
-        if st.button("Mettre à jour", key="tree_update_btn"):
-            st.session_state.nodes[node_to_edit]["label"] = edit_label.strip() or cur_label
-            st.session_state.nodes[node_to_edit]["category"] = edit_cat
-            if node_to_edit != "root" and edit_parent is not None and edit_parent != cur_parent:
-                st.session_state.edges = [
-                    (src, tgt) for src, tgt in st.session_state.edges
-                    if not (src == cur_parent and tgt == node_to_edit)
-                ]
-                st.session_state.edges.append((edit_parent, node_to_edit))
-            st.success("Nœud mis à jour.")
-
     # Visualisation
-    st.subheader("Visualisation de l'arbre")
+    st.subheader("Visualisation")
     dot = graphviz.Digraph("Arbre des Causes", format="png")
-    dot.attr(rankdir=DEFAULT_RANKDIR)  # RL: racine à droite
-
+    dot.attr(rankdir="RL")
     for node_id, data in st.session_state.nodes.items():
         label = data.get("label", node_id)
         cat = data.get("category")
@@ -239,89 +167,87 @@ elif page == "Arbre des causes":
         else:
             dot.node(node_id, label)
     for src, tgt in st.session_state.edges:
-        if ARROW_MODE == "PARENT_TO_CHILD":
-            dot.edge(src, tgt)
-        else:
-            dot.edge(tgt, src)
-
+        dot.edge(src, tgt)
     st.graphviz_chart(dot)
 
-    # Export Word
+    # Export
     st.subheader("Exporter")
-    if st.button("Exporter en Word (.docx)", key="tree_export_btn"):
-        doc = export_tree_to_docx(st.session_state.nodes, st.session_state.edges, st.session_state.root_label)
-        if doc is not None:
-            tmp_path = "arbre_des_causes.docx"
-            doc.save(tmp_path)
-            with open(tmp_path, "rb") as f:
-                st.download_button("Télécharger le document", f, file_name="arbre_des_causes.docx")
-
-# ===================
-# Page: 5 Pourquoi
-# ===================
-elif page == "Méthode des 5 Pourquoi":
-    st.title("Méthode des 5 Pourquoi")
-    st.caption("Conseils : viser 5 pourquoi.")
-
-    # 1) Décrire le problème
-    st.subheader("1) Décrire le problème")
-    st.session_state.fivewhy_problem = st.text_area("Problème observé", value=st.session_state.fivewhy_problem, key="fw_problem")
-
-    # 2) Poser successivement 'Pourquoi ?'
-    st.subheader("2) Poser successivement 'Pourquoi ?'")
-    # Render existing why inputs
-    for i in range(len(st.session_state.fivewhy_answers)):
-        st.text_input(
-            f"Réponse au Pourquoi n°{i+1}",
-            value=st.session_state.fivewhy_answers[i],
-            key=f"fw_ans_{i}",
-            on_change=None
+    if st.button("Exporter en Word (.docx)"):
+        buffer = export_docx(
+            st.session_state.root_label, st.session_state.nodes, st.session_state.edges
+        )
+        st.download_button(
+            "Télécharger le fichier Word",
+            buffer,
+            file_name="arbre_des_causes.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
-    cols = st.columns(3)
-    if cols[0].button("➕ Ajouter un 'Pourquoi'"):
-        st.session_state.fivewhy_answers.append("")
-        # Rerun using new API (experimental_rerun is removed)
-        try:
-            st.rerun()
-        except Exception:
-            pass
+# =========================
+# Page 5 Pourquoi
+# =========================
+elif page == "5 Pourquoi":
+    st.title("Analyse par la méthode des 5 Pourquoi")
+    st.markdown("**Conseils : viser 5 pourquoi.**")
 
-    if cols[1].button("➖ Retirer le dernier"):
-        if st.session_state.fivewhy_answers:
-            st.session_state.fivewhy_answers.pop()
-            try:
-                st.rerun()
-            except Exception:
-                pass
+    problem = st.text_area("1) Décrire le problème")
+    st.subheader("2) Poser successivement 'Pourquoi ?'")
 
-    if cols[2].button("🔁 Réinitialiser"):
-        st.session_state.fivewhy_problem = ""
-        st.session_state.fivewhy_answers = []
-        try:
-            st.rerun()
-        except Exception:
-            pass
+    if st.button("Ajouter un 'Pourquoi'"):
+        st.session_state.why.append("")
 
-    # Sync edited inputs back to session state
-    for i in range(len(st.session_state.fivewhy_answers)):
-        st.session_state.fivewhy_answers[i] = st.session_state.get(f"fw_ans_{i}", "")
+    for i in range(len(st.session_state.why)):
+        st.session_state.why[i] = st.text_input(
+            f"Réponse au Pourquoi n°{i+1}", value=st.session_state.why[i], key=f"why_{i}"
+        )
 
-    # 3) Récapitulatif vertical (problème + pourquoi 1..n)
-    st.subheader("Récapitulatif (du haut vers le bas)")
-    if st.session_state.fivewhy_problem or any(st.session_state.fivewhy_answers):
-        st.markdown(f"**Problème :** {st.session_state.fivewhy_problem or '(non renseigné)'}")
-        for i, ans in enumerate(st.session_state.fivewhy_answers, start=1):
-            st.markdown(f"**{i}. Pourquoi ?** — {ans or '(vide)'}")
-    else:
-        st.info("Saisissez le problème et ajoutez des 'Pourquoi ?' pour voir le récapitulatif.")
+    # Récapitulatif
+    st.subheader("Récapitulatif")
+    st.write(f"**Problème observé :** {problem}")
+    for i, ans in enumerate(st.session_state.why, 1):
+        st.write(f"{i}. Pourquoi ? — {ans}")
 
-    # Export Word
+    # Export
     st.subheader("Exporter")
-    if st.button("Exporter en Word (.docx)", key="fw_export_btn"):
-        doc = export_fivewhy_to_docx(st.session_state.fivewhy_problem, st.session_state.fivewhy_answers)
-        if doc is not None:
-            tmp_path = "5_pourquoi.docx"
-            doc.save(tmp_path)
-            with open(tmp_path, "rb") as f:
-                st.download_button("Télécharger le document", f, file_name="5_pourquoi.docx")
+    if st.button("Exporter en Word (.docx)", key="exp_why"):
+        buffer = export_why_docx(problem, st.session_state.why)
+        st.download_button(
+            "Télécharger le fichier Word",
+            buffer,
+            file_name="analyse_5_pourquoi.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+# =========================
+# Page Assistant IA
+# =========================
+elif page == "Assistant IA (Recueil d’effets)":
+    st.title("Assistant IA (Recueil d’effets)")
+    st.markdown("Collez vos constats, l’IA propose des **questions** et des **faits** à intégrer.")
+
+    recueil = st.text_area("Recueil d'effets")
+
+    if st.button("Analyser avec IA"):
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            prompt = f"""Analyse le texte suivant comme recueil d'effets d'un accident du travail.
+            Propose :
+            - une liste de questions complémentaires à poser
+            - une liste de faits objectifs, courts et neutres.
+
+            Texte :
+            {recueil}
+            """
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            st.session_state.ai_output = response.choices[0].message.content
+        except Exception as e:
+            st.error(f"Erreur IA : {e}")
+            st.info("⚠️ Vérifie que tu as défini OPENAI_API_KEY dans les secrets Streamlit.")
+
+    if "ai_output" in st.session_state:
+        st.subheader("Résultat IA")
+        st.markdown(st.session_state.ai_output)
