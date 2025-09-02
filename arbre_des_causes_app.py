@@ -1,6 +1,5 @@
 # fichier: arbre_des_causes_app.py
 import os
-import json
 from io import BytesIO
 from collections import defaultdict, deque
 
@@ -35,11 +34,13 @@ if "why" not in st.session_state:
 if "why_problem" not in st.session_state:
     st.session_state.why_problem = ""
 
-# Assistant IA (texte d’entrée + sortie textuelle à copier)
+# Assistant IA (texte d’entrée + sortie textuelle, + sélection)
 if "ai_doc_text" not in st.session_state:
     st.session_state.ai_doc_text = ""
 if "ai_questions_text" not in st.session_state:
     st.session_state.ai_questions_text = ""
+if "ai_detected_questions" not in st.session_state:
+    st.session_state.ai_detected_questions = []  # liste des questions extraites du bloc texte
 
 # =============== HELPERS GLOBAUX ===============
 def get_parent(node_id: str):
@@ -66,7 +67,6 @@ def is_descendant(root_id: str, query_id: str) -> bool:
     return False
 
 def export_arbre_docx(title, nodes, edges) -> BytesIO:
-    from docx import Document
     doc = Document()
     doc.add_heading(title or "Arbre des causes", 0)
 
@@ -103,20 +103,6 @@ def extract_docx_text(file_bytes: BytesIO) -> str:
             if any(cells):
                 parts.append("\t".join(c for c in cells if c))
     return "\n".join(parts).strip()
-
-# -------- Utilitaires JSON --------
-def try_extract_json(text: str):
-    if not text:
-        return None
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        snippet = text[start : end + 1]
-        try:
-            return json.loads(snippet)
-        except Exception:
-            return None
-    return None
 
 # -------- IA: OpenAI (questions profondes) ou heuristique locale --------
 def ai_questions_only(text: str) -> str:
@@ -170,10 +156,8 @@ Recueil d'effets:
 def heuristic_questions_text(text: str) -> str:
     """Fallback local: questions par thèmes (pas juste paraphrase)."""
     lower = text.lower()
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
 
     sections = []
-
     chrono = [
         "- Déroulez minute par minute l’heure qui a précédé l’événement (preuves: main courante, radios, badges).",
         "- Quels changements de plan ont eu lieu le jour J ? Par qui et pourquoi (preuves: briefing, ordres de travail) ?",
@@ -210,13 +194,42 @@ def heuristic_questions_text(text: str) -> str:
     sections.append(("Environnement", envt))
     sections.append(("Barrières/Contrôles", barri))
 
-    # Construire un texte compact et prêt à copier
     out = []
     for title, qs in sections:
         out.append(f"### {title}")
         out.extend(qs)
-        out.append("")  # ligne vide
+        out.append("")
     return "\n".join(out).strip()
+
+# -------- Parseur des questions (depuis le bloc texte IA) --------
+def detect_questions_from_text(text: str):
+    """
+    Détecte les puces/questions dans un bloc texte IA.
+    Règles: lignes commençant par -, *, • (avec ou sans espace), et/ou finissant par ?.
+    Ignore les titres (### ...).
+    """
+    detected = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("###"):
+            continue
+        bullet = line.startswith(("-", "*", "•"))
+        if bullet:
+            line = line.lstrip("-*• ").strip()
+        if bullet or line.endswith("?"):
+            if len(line) >= 3:
+                detected.append(line)
+    # dédoublonnage simple
+    uniq = []
+    seen = set()
+    for q in detected:
+        k = q.lower()
+        if k not in seen:
+            seen.add(k)
+            uniq.append(q)
+    return uniq
 
 # =============== NAVIGATION ===============
 st.sidebar.title("Navigation")
@@ -300,7 +313,7 @@ if page == "Arbre des causes":
                 st.rerun()
 
         with st.expander("Assistant IA (Recueil d’effets → Questions)", expanded=False):
-            st.caption("Uploade un .docx **ou** colle ton texte. La sortie est un **bloc à copier-coller**.")
+            st.caption("Uploade un .docx **ou** colle ton texte. La sortie est un **bloc à copier-coller** ET une **liste à cocher** pour injecter directement des questions comme nœuds.")
             up = st.file_uploader("Importer un fichier Word (.docx)", type=["docx"])
             if up is not None:
                 file_bytes = BytesIO(up.read())
@@ -317,18 +330,64 @@ if page == "Arbre des causes":
                 height=160
             )
 
-            if st.button("Générer les questions", key="ai_make_questions"):
-                st.session_state.ai_questions_text = ai_questions_only(st.session_state.ai_doc_text)
-                st.success("Questions générées.")
+            col_q1, col_q2 = st.columns([1,1])
+            with col_q1:
+                if st.button("Générer les questions", key="ai_make_questions"):
+                    st.session_state.ai_questions_text = ai_questions_only(st.session_state.ai_doc_text)
+                    # détecter des questions individuelles pour la liste à cocher
+                    st.session_state.ai_detected_questions = detect_questions_from_text(st.session_state.ai_questions_text)
+                    st.success("Questions générées.")
+            with col_q2:
+                if st.button("Effacer la sortie IA", key="ai_clear"):
+                    st.session_state.ai_questions_text = ""
+                    st.session_state.ai_detected_questions = []
 
             if st.session_state.ai_questions_text:
-                st.caption("Questions proposées (à copier-coller) :")
+                st.caption("Questions proposées (bloc à copier-coller) :")
                 st.text_area(
                     "Questions",
                     value=st.session_state.ai_questions_text,
-                    height=260,
+                    height=220,
                     label_visibility="collapsed"
                 )
+
+            if st.session_state.ai_detected_questions:
+                st.divider()
+                st.caption("Cocher des questions pour les ajouter comme nœuds dans l’Arbre :")
+                selected_items = []
+                for i, q in enumerate(st.session_state.ai_detected_questions):
+                    # clef stable par contenu pour éviter persistance indésirable
+                    key = f"aiq_{abs(hash(q)) % (10**9)}_{i}"
+                    if st.checkbox(q, key=key):
+                        selected_items.append(q)
+
+                if selected_items:
+                    inj_parent = st.selectbox(
+                        "Parent pour les nouvelles questions",
+                        options=list(st.session_state.nodes.keys()),
+                        format_func=lambda x: st.session_state.nodes[x]["label"],
+                        key="inj_parent_ai"
+                    )
+                    inj_cat = st.selectbox(
+                        "Catégorie à appliquer",
+                        options=list(CATEGORIES.keys()),
+                        index=0,
+                        key="inj_cat_ai"
+                    )
+                    if st.button("Ajouter les questions sélectionnées dans l’Arbre", key="inj_btn_ai"):
+                        count = 0
+                        for q in selected_items:
+                            new_id = f"node_{len(st.session_state.nodes)}"
+                            st.session_state.nodes[new_id] = {"label": q, "category": inj_cat}
+                            st.session_state.edges.append((inj_parent, new_id))
+                            count += 1
+                        st.success(f"{count} question(s) ajoutée(s) comme nœud(s).")
+                        # réinitialiser les cases cochées
+                        for i, q in enumerate(st.session_state.ai_detected_questions):
+                            k = f"aiq_{abs(hash(q)) % (10**9)}_{i}"
+                            if k in st.session_state:
+                                st.session_state[k] = False
+                        st.rerun()
 
         with st.expander("Exporter", expanded=False):
             if st.button("Exporter l’arbre en Word (.docx)", key="export_arbre"):
@@ -390,7 +449,6 @@ elif page == "5 Pourquoi":
 
     with st.expander("Exporter", expanded=False):
         if st.button("Exporter en Word (.docx)", key="export_why"):
-            from docx import Document
             doc = Document()
             doc.add_heading("Analyse 5 Pourquoi", 0)
             if st.session_state.why_problem:
